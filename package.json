@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "main.js",
   "scripts": {
-    "dev": "nodemon main.js",
-    "start": "node main.js"
+    "dev": "nodemon tgbot.js",
+    "start": "node tgbot.js"
   },
   "keywords": [],
   "author": "",
