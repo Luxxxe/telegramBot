@@ -1,4 +1,5 @@
 module.exports = {
+    // Клавиатура с кнопкой для начала игры
     gameOptions: {
         reply_markup: JSON.stringify({
             inline_keyboard: [
@@ -10,11 +11,28 @@ module.exports = {
         })
     },
     
+    // Клавиатура с кнопкой для новой игры
     againOptions: {
         reply_markup: JSON.stringify({
             inline_keyboard: [
                 [{text: "Играть ещё раз!", callback_data: "/again"}]
             ]
         })
+    },
+    
+    // Клавиатура с кнопкой для отправки номера телефона
+    phoneNumberOptions: {
+        reply_markup: {
+            keyboard: [
+              [
+                {
+                  text: 'Отправить номер телефона',
+                  request_contact: true, // Указываем, что кнопка будет запрашивать номер
+                },
+              ],
+            ],
+            one_time_keyboard: true, // Клавиатура исчезнет после использования
+            resize_keyboard: true, // Автоматическая подгонка размера клавиатуры
+          }
     }
 }
