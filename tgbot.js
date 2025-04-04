@@ -1,83 +1,88 @@
-const { randomBytes } = require('crypto');
-const TelegramApi = require('node-telegram-bot-api');
-const { callbackify } = require('util');
-const {gameOptions, againOptions, phoneNumberOptions} = require("./options")
+const TelegramApi = require("node-telegram-bot-api");
+const fs = require("fs");
 
-
+// ✅ Твой токен бота
 const token = "7954187898:AAE1gcCn4zfby4Z8AsNl0pZfA_tLv2TgL4w";
+const bot = new TelegramApi(token, { polling: true });
 
-const bot = new TelegramApi(token, {polling: true})
-const chats = {}
-
-const startGame = async (chatId) => {
-    await bot.sendMessage(chatId, `Сейчас я загадаю цифру от 0 до 9, а ты попробуй её угадать!`);
-    const randomNumber = Math.floor(Math.random() * 10);
-    chats[chatId] = randomNumber;
-    await bot.sendMessage(chatId, 'Отгадывай', gameOptions);
+// 🛑 Загружаем запрещённые слова
+let badWords = [];
+try {
+    badWords = JSON.parse(fs.readFileSync("badwords.json", "utf8"));
+} catch (err) {
+    console.error("Ошибка загрузки badwords.json:", err);
 }
 
-const start = () => {
-    bot.setMyCommands([
-        {command: '/start', description: 'Начальное приветствие'},
-        {command: '/info', description: 'Информация о пользователе'},
-        {command: '/game', description: 'Сыграть в игру'}
-    ])
+// 📂 Загружаем предупреждения пользователей
+let warnings = {};
+try {
+    if (fs.existsSync("warnings.json")) {
+        warnings = JSON.parse(fs.readFileSync("warnings.json", "utf8"));
+    }
+} catch (err) {
+    console.error("Ошибка загрузки warnings.json:", err);
+}
+
+// 💾 Функция сохранения предупреждений
+const saveWarnings = () => {
+    fs.writeFileSync("warnings.json", JSON.stringify(warnings, null, 2));
+};
+
+// ✅ Устанавливаем команды бота
+bot.setMyCommands([
+    { command: "/start", description: "Начальное приветствие" },
+    { command: "/info", description: "Информация о пользователе" }
+]);
+
+// 🎯 Основной обработчик сообщений
+bot.on("message", async (msg) => {
+    const chatId = msg.chat.id;
+    const userId = msg.from.id;
+    const userName = msg.from.username || msg.from.first_name;
+    const text = msg.text?.toLowerCase();
+    if (!text) return;
+
+    // **Проверка команд**
+    if (text === "/start") {
+        return bot.sendMessage(chatId, `Добро пожаловать, ${msg.from.first_name}!`);
+    }
+
+    if (text === "/info") {
+        return bot.sendMessage(chatId, `Тебя зовут: ${msg.from.first_name}`);
+    }
+
+    // **Проверяем текст на наличие запрещённых слов**
+    const foundBadWords = badWords.some(word => text.includes(word));
     
-    bot.on('message', async msg => {
-        const text = msg.text;
-        const chatId = msg.chat.id;
-
-        // Если это сообщение с контактной информацией (номер телефона),
-        // не обрабатываем его здесь, а только в событии contact.
-        if (msg.contact) {
-            return; // Прерываем обработку, если контакт был уже получен
+    if (foundBadWords) {
+        try {
+            await bot.deleteMessage(chatId, msg.message_id);
+        } catch (err) {
+            console.warn(`Ошибка удаления сообщения: ${err.message}`);
+            return;
         }
 
-        if (text === '/start') {
-            await bot.sendSticker(chatId, 'https://tlgrm.ru/_/stickers/1b8/5b6/1b85b61c-f043-45e2-b9ca-3334737e2af0/12.webp');
-            return bot.sendMessage(chatId, `Добро пожаловать, ${msg.from.first_name}!`);
-        }
+        // **Обновляем предупреждения**
+        warnings[userId] = (warnings[userId] || 0) + 1;
+        saveWarnings();
 
-        if (text === "/info") {
-            await bot.sendMessage(chatId, `Тебя зовут: ${msg.from.first_name}`);
-            return bot.sendMessage(chatId, 'Пожалуйста, отправьте ваш номер телефона:', phoneNumberOptions);
-        }
-
-        if (text === "/game") {
-            return startGame(chatId);
-        }
-        
-        // Если это не распознано, говорим, что не понимаем команду
-        return bot.sendMessage(chatId, "Я тебя не понимаю, попробуй ещё раз!");
-    });
-
-    // Обработчик получения контакта (номера телефона)
-    bot.on('contact', (msg) => {
-        const chatId = msg.chat.id;
-
-        // Проверка, что контакт был передан
-        if (msg.contact) {
-            const phoneNumber = msg.contact.phone_number;
-            // Отправляем номер телефона только один раз
-            bot.sendMessage(chatId, `Ваш номер телефона: ${phoneNumber}`);
-        }
-    });
-
-    // Обработчик callback_query для игры
-    bot.on("callback_query", msg => {
-        const data = msg.data;
-        const chatId = msg.message.chat.id;
-    
-        if (data === "/again") {
-            return startGame(chatId);
-        }
-    
-        if (parseInt(data) === chats[chatId]) { // Приводим data к числу и сравниваем
-            return bot.sendMessage(chatId, `Поздравляю! Ты отгадал цифру ${chats[chatId]}`, againOptions);
+        // **Проверяем мут**
+        if (warnings[userId] >= 3) {
+            const untilDate = Math.floor(Date.now() / 1000) + 60 * 60;
+            try {
+                await bot.restrictChatMember(chatId, userId, {
+                    permissions: { can_send_messages: false },
+                    until_date: untilDate,
+                });
+                bot.sendMessage(chatId, `🔇 @${userName} получил мут на 1 час за 3 нарушения.`);
+                warnings[userId] = 0;
+                saveWarnings();
+            } catch (err) {
+                console.error('Ошибка при муте:', err.message);
+            }
         } else {
-            return bot.sendMessage(chatId, `Увы, не в этот раз) Попробуй ещё раз! Бот загадал цифру ${chats[chatId]}`, againOptions);
+            const remaining = 3 - warnings[userId];
+            bot.sendMessage(chatId, `🚫 @${userName}, не нарушай! Осталось предупреждений: ${remaining}`);
         }
-    });
-}
-
-start();
+    }
+});
